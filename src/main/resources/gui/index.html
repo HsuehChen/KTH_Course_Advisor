@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KTH Course Advisor Platform</title>
+    <style>
+        /* --- 基礎樣式 --- */
+        body { font-family: "Open Sans", Arial, sans-serif; color: #333; margin: 0; padding: 0; background-color: #f9f9f9; height: 100vh; display: flex; flex-direction: column; }
+        header { background: #004080; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { margin: 0; font-size: 1.5rem; }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        .search-panel { width: 50%; padding: 20px; overflow-y: auto; border-right: 1px solid #ddd; background: white; }
+        .schedule-panel { width: 50%; padding: 20px; background: #f0f4f8; display: flex; flex-direction: column; }
+
+        .semester-switch { background: rgba(255,255,255,0.2); padding: 5px; border-radius: 20px; display: flex; gap: 10px; }
+        .switch-btn { background: transparent; border: none; color: rgba(255,255,255,0.7); padding: 8px 15px; cursor: pointer; border-radius: 15px; font-weight: bold; transition: 0.3s; }
+        .switch-btn.active { background: white; color: #004080; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+
+        .filter-section { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #eee; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .filter-group { display: flex; flex-direction: column; }
+        label { font-size: 0.85rem; font-weight: bold; margin-bottom: 3px; color: #555; }
+        select, input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+
+        .course-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; margin-bottom: 10px; transition: 0.2s; cursor: pointer; position: relative; }
+        .course-card:hover { border-color: #004080; transform: translateX(2px); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .course-card::after { content: "Click for details ↗"; position: absolute; right: 10px; bottom: 8px; font-size: 0.7rem; color: #004080; font-weight: bold; opacity: 0; transition: opacity 0.2s; background: rgba(230, 240, 255, 0.9); padding: 2px 6px; border-radius: 4px; }
+        .course-card:hover::after { opacity: 1; }
+
+        .card-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+        .code { color: #004080; font-weight: bold; font-size: 1.1rem; }
+        .credits { font-weight: bold; color: #666; font-size: 0.9rem; min-width: 50px; text-align: right; }
+        .card-title { font-weight: 600; margin-bottom: 5px; display: block; padding-right: 10px; }
+        .card-meta { font-size: 0.85rem; color: #777; margin-bottom: 15px; }
+        .tag { display: inline-block; background: #e6f0ff; color: #004080; padding: 1px 6px; border-radius: 4px; font-size: 0.75rem; margin-right: 4px; }
+
+        .schedule-grid { display: flex; gap: 15px; flex: 1; }
+        .period-column { flex: 1; background: #eef2f5; border: 1px dashed #cbd5e0; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; }
+        .period-header { text-align: center; font-weight: bold; color: #004080; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 2px solid #cbd5e0; }
+        .schedule-item { background: #fff; border-left: 4px solid #004080; padding: 10px; margin-bottom: 8px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+
+        /* --- MODAL --- */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: white; width: 90%; max-width: 600px; max-height: 85vh; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .modal-header { padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: start; background: #fcfcfc; }
+        .modal-title h2 { margin: 0; color: #004080; }
+        .modal-title span { color: #666; font-size: 0.9rem; font-weight: normal; }
+        .close-btn { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #999; }
+        .close-btn:hover { color: #333; }
+
+        .modal-body { padding: 20px; overflow-y: auto; line-height: 1.6; }
+        .info-section { margin-bottom: 25px; }
+        .info-section h3 { font-size: 1.1rem; color: #004080; border-bottom: 2px solid #eee; padding-bottom: 5px; margin-bottom: 10px; margin-top: 0; }
+
+        .sub-header { font-size: 0.95rem; font-weight: bold; color: #333; margin-top: 20px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; border-left: 3px solid #004080; padding-left: 8px; background: #f4f8fb; padding-top:5px; padding-bottom:5px; }
+        .info-html { font-size: 0.95rem; color: #444; line-height: 1.6; }
+        .info-html p { margin-top: 0; margin-bottom: 10px; }
+        .info-html ul, .info-html ol { padding-left: 20px; margin-top: 5px; margin-bottom: 15px; }
+        .info-html li { margin-bottom: 5px; }
+
+        .exam-block { background: #f7f9fc; padding: 15px; border-radius: 5px; border: 1px solid #e1e8ed; }
+        .grade-scale { font-weight: bold; color: #004080; font-size: 1.1rem; margin-bottom: 5px; display: block; }
+        .modal-footer { padding: 15px 20px; background: #f9f9f9; border-top: 1px solid #eee; text-align: right; font-size: 0.85rem; color: #666; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>KTH Course Advisor Platform</h1>
+    <div class="semester-switch">
+        <button class="switch-btn active" id="btnAutumn" onclick="setSemester('autumn')">Autumn (P1, P2)</button>
+        <button class="switch-btn" id="btnSpring" onclick="setSemester('spring')">Spring (P3, P4)</button>
+    </div>
+</header>
+
+<div class="main-container">
+    <div class="search-panel">
+        <div class="filter-section">
+            <div class="filter-group" style="grid-column: span 2;">
+                <label>Search Course</label>
+                <input type="text" id="searchInput" placeholder="E.g. DD2424 or Deep Learning">
+            </div>
+            <div class="filter-group">
+                <label>Period</label>
+                <select id="periodSelect"><option value="">All</option></select>
+            </div>
+            <div class="filter-group">
+                <label>Credits</label>
+                <select id="creditSelect"><option value="">All</option></select>
+            </div>
+            <div class="filter-group" style="grid-column: span 2;">
+                <label>Programme</label>
+                <select id="progSelect"><option value="">All Programmes</option></select>
+            </div>
+        </div>
+        <div id="courseListLabel" style="margin-bottom: 10px; color: #666; font-size: 0.9rem;">Loading...</div>
+        <div id="courseList"></div>
+    </div>
+
+    <div class="schedule-panel">
+        <h2 style="margin-top: 0; font-size: 1.2rem; color: #004080;">My Schedule <span id="currentSemLabel" style="font-weight:normal; color:#666; font-size:1rem;">(Autumn)</span></h2>
+
+        <div id="autumnGrid" class="schedule-grid">
+            <div class="period-column"><div class="period-header">Period 1</div><div id="listP1"></div></div>
+            <div class="period-column"><div class="period-header">Period 2</div><div id="listP2"></div></div>
+        </div>
+        <div id="springGrid" class="schedule-grid" style="display: none;">
+            <div class="period-column"><div class="period-header">Period 3</div><div id="listP3"></div></div>
+            <div class="period-column"><div class="period-header">Period 4</div><div id="listP4"></div></div>
+        </div>
+
+        <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid #ddd; font-size: 0.85rem; color: #777;">
+            <strong>Instructions:</strong> Click a course to see details. <br>
+            To add a course, tell Furhat: <em>"Please add [Course Code] to period [X]."</em>
+        </div>
+    </div>
+</div>
+
+<div id="courseModal" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <div class="modal-title">
+                <h2 id="mCode"></h2>
+                <span id="mName"></span>
+            </div>
+            <button class="close-btn" onclick="closeModalDirect()">×</button>
+        </div>
+        <div class="modal-body">
+
+            <div class="info-section">
+                <h3>Course Details</h3>
+                <div id="mDescContent"></div>
+            </div>
+
+            <div class="info-section">
+                <h3>Examination</h3>
+                <div class="exam-block">
+                    <div id="mGradeScaleWrapper" style="margin-bottom: 10px;">
+                        <span style="color:#666; font-size:0.85rem;">Grading Scale:</span>
+                        <span id="mGradeScale" class="grade-scale"></span>
+                    </div>
+                    <div style="font-size: 0.85rem; font-weight: bold; color: #555; margin-bottom: 5px;">Exam Comments:</div>
+                    <div id="mExamComments" class="info-html" style="font-style: italic; color: #555;"></div>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h3>Info</h3>
+                <div class="info-html">
+                    Credits: <strong id="mCredits"></strong><br>
+                    Periods: <strong id="mPeriods"></strong><br>
+                    Department: <span id="mDept"></span>
+                </div>
+            </div>
+
+        </div>
+        <div class="modal-footer">
+            KTH Official Page: <a id="mLink" href="#" target="_blank">View on kth.se</a>
+        </div>
+    </div>
+</div>
+
+<script>
+    let allCourses = [];
+    let mySchedule = [];
+    let currentSemester = 'autumn';
+    let globalProgMap = new Map();
+
+    fetch('course_all.json')
+        .then(res => res.json())
+        .then(data => {
+            processData(data);
+            updateScheduleView();
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById('courseListLabel').innerText = "Error loading data.";
+        });
+
+    window.setSemester = function(sem) {
+        currentSemester = sem;
+        document.getElementById('btnAutumn').className = sem === 'autumn' ? 'switch-btn active' : 'switch-btn';
+        document.getElementById('btnSpring').className = sem === 'spring' ? 'switch-btn active' : 'switch-btn';
+        document.getElementById('autumnGrid').style.display = sem === 'autumn' ? 'flex' : 'none';
+        document.getElementById('springGrid').style.display = sem === 'spring' ? 'flex' : 'none';
+        document.getElementById('currentSemLabel').innerText = sem === 'autumn' ? '(Autumn)' : '(Spring)';
+    }
+
+    function isValidText(text) {
+        if (!text) return false;
+        if (typeof text !== 'string') return false;
+        const clean = text.replace(/<p>\s*<\/p>/g, "").replace(/<br\s*\/?>/g, "").trim();
+        return clean.length > 0;
+    }
+
+    function processData(data) {
+        allCourses = data.map(item => {
+            if (!item.detailedInformation || !item.detailedInformation.course) return null;
+
+            const info = item.detailedInformation;
+            const course = info.course;
+            const syllabus = course.courseSyllabus || {};
+
+            // 1. Grading Scale
+            const globalGradeScales = item.formattedGradeScales || {};
+            const gradeCode = course.gradeScaleCode || "";
+            const gradeScaleText = globalGradeScales[gradeCode] ? globalGradeScales[gradeCode] : gradeCode;
+
+            // 2. Goals
+            let goals = "";
+            if (isValidText(syllabus.goals)) goals = syllabus.goals;
+            else if (isValidText(course.goals)) goals = course.goals;
+            else if (isValidText(syllabus.learningOutcomes)) goals = syllabus.learningOutcomes;
+
+            // 3. Content
+            let content = "";
+            if (isValidText(syllabus.content)) content = syllabus.content;
+            else if (isValidText(course.content)) content = course.content;
+            else if (isValidText(course.recruitmentText)) content = course.recruitmentText;
+            else if (isValidText(course.info)) content = course.info;
+
+            // 4. Eligibility
+            let eligibility = "";
+            if (isValidText(syllabus.eligibility)) eligibility = syllabus.eligibility;
+            else if (isValidText(course.eligibility)) eligibility = course.eligibility;
+            else if (isValidText(syllabus.prerequisites)) eligibility = syllabus.prerequisites;
+
+            // 5. Exam Comments
+            let examComments = "No specific comments.";
+            if (isValidText(syllabus.examComments)) examComments = syllabus.examComments;
+            else if (isValidText(course.examComments)) examComments = course.examComments;
+
+            // Period Logic
+            const periods = new Set();
+            if (info.roundInfos) {
+                info.roundInfos.forEach(r => {
+                    if (r.round && r.round.courseRoundTerms) {
+                        r.round.courseRoundTerms.forEach(t => {
+                            if (t.creditsP1 > 0) periods.add('P1');
+                            if (t.creditsP2 > 0) periods.add('P2');
+                            if (t.creditsP3 > 0) periods.add('P3');
+                            if (t.creditsP4 > 0) periods.add('P4');
+                        });
+                    }
+                });
+            }
+
+            // Programme Logic
+            const programmes = new Set();
+            if (info.roundInfos) {
+                info.roundInfos.forEach(r => {
+                    if (r.usage) {
+                        r.usage.forEach(u => {
+                            if (u.programmeCode) {
+                                programmes.add(u.programmeCode);
+                                const pName = u.programmeName || u.name || u.title || "";
+                                if (pName && !globalProgMap.has(u.programmeCode)) {
+                                    globalProgMap.set(u.programmeCode, `${u.programmeCode} - ${pName}`);
+                                } else if (!globalProgMap.has(u.programmeCode)) {
+                                    globalProgMap.set(u.programmeCode, u.programmeCode);
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+
+            return {
+                code: course.courseCode || "N/A",
+                name: course.title || "Unknown",
+                credits: course.credits || 0,
+                periods: Array.from(periods).sort(),
+                programmes: Array.from(programmes).sort(),
+                dept: course.department ? course.department.name : '',
+                goals: goals,
+                content: content,
+                eligibility: eligibility,
+                examComments: examComments,
+                gradeScale: gradeScaleText
+            };
+        }).filter(c => c !== null);
+
+        populateFilters();
+        renderCourses(allCourses);
+    }
+
+    function populateFilters() {
+        const periods = new Set();
+        const credits = new Set();
+        const progs = new Set();
+        allCourses.forEach(c => {
+            c.periods.forEach(p => periods.add(p));
+            credits.add(c.credits);
+            c.programmes.forEach(p => progs.add(p));
+        });
+
+        const pSelect = document.getElementById('periodSelect');
+        Array.from(periods).sort().forEach(p => pSelect.add(new Option(p, p)));
+        const cSelect = document.getElementById('creditSelect');
+        Array.from(credits).sort((a,b)=>a-b).forEach(c => cSelect.add(new Option(c + " hp", c)));
+        const progSelect = document.getElementById('progSelect');
+        const sortedProgCodes = Array.from(progs).sort();
+        sortedProgCodes.forEach(code => {
+            const displayName = globalProgMap.get(code) || code;
+            progSelect.add(new Option(displayName, code));
+        });
+
+        document.getElementById('periodSelect').addEventListener('change', filterCourses);
+        document.getElementById('creditSelect').addEventListener('change', filterCourses);
+        document.getElementById('progSelect').addEventListener('change', filterCourses);
+        document.getElementById('searchInput').addEventListener('input', filterCourses);
+    }
+
+    function filterCourses() {
+        const pVal = document.getElementById('periodSelect').value;
+        const cVal = document.getElementById('creditSelect').value;
+        const progVal = document.getElementById('progSelect').value;
+        const searchVal = document.getElementById('searchInput').value.toLowerCase();
+
+        const filtered = allCourses.filter(c => {
+            const matchP = pVal === "" || c.periods.includes(pVal);
+            const matchC = cVal === "" || c.credits == cVal;
+            const matchProg = progVal === "" || c.programmes.includes(progVal);
+            const matchSearch = c.name.toLowerCase().includes(searchVal) || c.code.toLowerCase().includes(searchVal);
+            return matchP && matchC && matchProg && matchSearch;
+        });
+        renderCourses(filtered);
+    }
+
+    function renderCourses(courses) {
+        document.getElementById('courseListLabel').innerText = `Found ${courses.length} courses`;
+        const list = document.getElementById('courseList');
+        list.innerHTML = '';
+        const itemsToShow = courses.slice(0, 50);
+
+        itemsToShow.forEach(c => {
+            const div = document.createElement('div');
+            div.className = 'course-card';
+            div.onclick = function() { openModal(c); };
+
+            div.innerHTML = `
+                <div class="card-header">
+                    <span class="code">${c.code}</span>
+                    <span class="credits">${c.credits} hp</span>
+                </div>
+                <span class="card-title">${c.name}</span>
+                <div class="card-meta">
+                    Periods: ${c.periods.join(', ')} <br>
+                    ${c.programmes.slice(0,3).map(p => `<span class="tag">${p}</span>`).join('')}
+                </div>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    function openModal(course) {
+        try {
+            document.getElementById('mCode').innerText = course.code;
+            document.getElementById('mName').innerText = course.name;
+            document.getElementById('mCredits').innerText = course.credits + " hp";
+            document.getElementById('mPeriods').innerText = course.periods.join(', ');
+            document.getElementById('mDept').innerText = course.dept;
+            document.getElementById('mLink').href = `https://www.kth.se/student/kurser/kurs/${course.code}?l=en`;
+
+            const descContainer = document.getElementById('mDescContent');
+            let html = "";
+
+            if (isValidText(course.goals)) {
+                html += `<div class="sub-header">Intended Learning Outcomes</div><div class="info-html">${course.goals}</div>`;
+            }
+            if (isValidText(course.content)) {
+                html += `<div class="sub-header">Course Content</div><div class="info-html">${course.content}</div>`;
+            }
+            if (isValidText(course.eligibility)) {
+                html += `<div class="sub-header">Prerequisites (Eligibility)</div><div class="info-html">${course.eligibility}</div>`;
+            }
+
+            if (html === "") {
+                html = "<div style='color:#777; padding:10px 0;'>No detailed description available in this dataset. Please check KTH website via the link below.</div>";
+            }
+            descContainer.innerHTML = html;
+
+            document.getElementById('mGradeScale').innerText = course.gradeScale || "N/A";
+            document.getElementById('mExamComments').innerHTML = course.examComments;
+
+            document.querySelector('.modal-overlay').style.display = 'flex';
+        } catch (e) {
+            console.error("Error opening modal:", e);
+        }
+    }
+
+    function closeModal(e) {
+        if (e.target.classList.contains('modal-overlay')) {
+            document.querySelector('.modal-overlay').style.display = 'none';
+        }
+    }
+
+    function closeModalDirect() {
+        document.querySelector('.modal-overlay').style.display = 'none';
+    }
+
+    // --- Furhat Interface (Legacy / Debug) ---
+    // 這裡主要由 Kotlin 寫檔案來驅動，不需要主動呼叫 API
+    // 函數保留是為了手動測試方便
+    window.furhatUpdateSchedule = function(action, courseCode, period) {
+        // 僅前端模擬用，實際資料流現在是 Kotlin -> JSON -> HTML
+        if (action === 'add') {
+            const course = allCourses.find(c => c.code === courseCode);
+            if (!course || mySchedule.find(c => c.code === courseCode)) return;
+            const targetPeriod = period || course.periods[0];
+            mySchedule.push({ ...course, assignedPeriod: targetPeriod });
+        } else if (action === 'remove') {
+            mySchedule = mySchedule.filter(c => c.code !== courseCode);
+        }
+        updateScheduleView();
+    };
+
+    function updateScheduleView() {
+        ['P1', 'P2', 'P3', 'P4'].forEach(p => { document.getElementById(`list${p}`).innerHTML = ''; });
+        mySchedule.forEach(c => {
+            const div = document.createElement('div');
+            div.className = 'schedule-item';
+            div.innerHTML = `<div class="s-code">${c.code}</div><span class="s-title">${c.name}</span><div style="font-size:0.8rem; color:#888;">${c.credits} hp</div>`;
+            const container = document.getElementById(`list${c.assignedPeriod}`);
+            if (container) container.appendChild(div);
+        });
+    }
+
+    // --- [關鍵修正] 定時讀取 my_schedule.json ---
+    setInterval(() => {
+        // 加上時間戳記避免快取 (?t=...)
+        fetch('my_schedule.json?t=' + new Date().getTime())
+            .then(res => {
+                // 如果檔案還不存在(還沒加選過)，可能會 404，這裡做處理
+                if (!res.ok) throw new Error("File not found");
+                return res.json();
+            })
+            .then(data => {
+                 // 簡單比對是否更新
+                 if (data && JSON.stringify(data) !== JSON.stringify(lastState)) {
+                     console.log("Schedule updated from file:", data);
+                     lastState = data;
+                     mySchedule = [];
+
+                     // 根據讀到的 JSON 重新渲染
+                     data.forEach(item => {
+                         // item 格式: {code, name, credits, period}
+                         // 嘗試從 allCourses 找詳細資料以求完整，若無則用 item 的資訊
+                         const details = allCourses.find(c => c.code === item.code);
+
+                         if (details) {
+                             mySchedule.push({ ...details, assignedPeriod: item.period });
+                         } else {
+                             // 如果資料庫找不到(例如假資料)，直接用 JSON 裡的
+                             mySchedule.push({
+                                 code: item.code,
+                                 name: item.name,
+                                 credits: item.credits,
+                                 assignedPeriod: item.period
+                             });
+                         }
+                     });
+                     updateScheduleView();
+                 }
+            })
+            .catch(err => {
+                // 檔案可能還沒產生，這是正常的，忽略即可
+            });
+    }, 1000); // 每秒檢查一次
+    let lastState = [];
+</script>
+
+</body>
+</html>

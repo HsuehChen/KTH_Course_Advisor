@@ -8,6 +8,9 @@ import furhatos.flow.kotlin.State
 import furhatos.flow.kotlin.furhat
 import furhatos.flow.kotlin.state
 import furhatos.flow.kotlin.users
+import furhatos.skills.HostedGUI
+
+val myGui = HostedGUI("CoursePlanning GUI", "src/main/resources/gui", port = 51234)
 
 val Init: State = state {
     init {

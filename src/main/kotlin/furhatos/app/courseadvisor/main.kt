@@ -4,6 +4,8 @@ import furhatos.app.courseadvisor.flow.Init
 import furhatos.flow.kotlin.Flow
 import furhatos.skills.Skill
 
+
+
 class CourseadvisorSkill : Skill() {
     override fun start() {
         Flow().run(Init)
