@@ -57,26 +57,39 @@ val CoursePlanning: State = state {
 
     // --- 加選課程 ---
     onResponse<AddCourse> {
-        // 為了保險，先轉成 String
-        val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
+        val rawName = it.intent.courseName?.text
 
         if (rawName != null) {
-            // 因為是 EnumEntity，抓到的一定是資料庫裡有的名字，所以這裡幾乎一定找得到
             val foundCourse = CourseDatabase.findCourseByName(rawName)
 
             if (foundCourse != null) {
-                // ... (加入購物車邏輯，與之前相同)
+                // 檢查重複
                 if (myCart.any { item -> item.code == foundCourse.code }) {
+                    furhat.gesture(Gestures.Surprise)
                     furhat.say("You already have ${foundCourse.name}.")
                 } else {
-                    val newItem = ScheduledCourse(foundCourse.code, foundCourse.name, foundCourse.credits, "P1")
+                    // [關鍵修正]：動態取得學期與學分
+                    // 邏輯：優先選該課程的第一個可用學期 (例如它是 P3 的課，就會自動選 P3)
+                    val targetPeriod = foundCourse.availablePeriods.firstOrNull() ?: "P1"
+                    val actualCredits = foundCourse.credits
+
+                    val newItem = ScheduledCourse(
+                        code = foundCourse.code,
+                        name = foundCourse.name,
+                        credits = actualCredits, // 使用真實學分
+                        period = targetPeriod    // 使用真實學期
+                    )
+
                     myCart.add(newItem)
                     saveScheduleToDisk()
-                    furhat.say("Added ${foundCourse.name}.")
+
+                    furhat.gesture(Gestures.Nod)
+                    // 讓 Furhat 說出具體的資訊
+                    furhat.say("Added ${foundCourse.name}. It is $actualCredits credits and runs in period $targetPeriod.")
                 }
             } else {
-                // 理論上不太會發生，除非 List 更新不同步
-                furhat.say("I heard $rawName, but I can't find its details.")
+                furhat.gesture(Gestures.BrowFrown)
+                furhat.say("I heard $rawName, but I couldn't find it.")
             }
         } else {
             furhat.say("Which course?")
