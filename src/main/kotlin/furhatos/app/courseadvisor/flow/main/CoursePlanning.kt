@@ -2,6 +2,7 @@ package furhatos.app.courseadvisor.flow.main
 
 import furhatos.app.courseadvisor.nlu.*
 import furhatos.app.courseadvisor.data.CourseDatabase
+import furhatos.app.courseadvisor.data.CourseInfo
 import furhatos.flow.kotlin.*
 import furhatos.gestures.Gestures
 import furhatos.nlu.common.No
@@ -9,7 +10,10 @@ import furhatos.nlu.common.Yes
 import com.google.gson.Gson
 import java.io.File
 import java.util.ArrayDeque
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
+// --- 資料結構 ---
 data class ScheduledCourse(
     val code: String,
     val name: String,
@@ -17,12 +21,22 @@ data class ScheduledCourse(
     val period: String
 )
 
+// --- 全域變數 ---
 var myCart = mutableListOf<ScheduledCourse>()
-val historyStack = ArrayDeque<List<ScheduledCourse>>() // 歷史紀錄堆疊 (用於 Undo)
+val historyStack = ArrayDeque<List<ScheduledCourse>>()
+
+// 暫存變數
+var tempCourseToAdd: CourseInfo? = null
+var tempCourseToRemove: ScheduledCourse? = null
+
+// 計數器
+var dialogueTurns = 0
+var failedAttempts = 0
+
+// --- 工具函式 ---
 
 fun saveScheduleToDisk() {
     try {
-        // 請確保路徑正確
         val file = File("src/main/resources/gui/my_schedule.json")
         val json = Gson().toJson(myCart)
         file.writeText(json)
@@ -32,91 +46,138 @@ fun saveScheduleToDisk() {
     }
 }
 
-// 儲存歷史紀錄 (在每次變更 myCart 前呼叫)
 fun saveHistory() {
-    // 存入一份目前的副本 (必須用 toList 深拷貝)
     historyStack.push(myCart.toList())
-    // 限制堆疊大小為 10，避免記憶體過大
-    if (historyStack.size > 10) {
-        historyStack.removeLast()
+    if (historyStack.size > 10) historyStack.removeLast()
+}
+
+fun logInteraction(userSpeech: String) {
+    dialogueTurns++
+    try {
+        val file = File("dialogue_logs.txt")
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        file.appendText("[$timestamp] [OK] Turn: $dialogueTurns | User: $userSpeech\n")
+        println("📝 Logged turn $dialogueTurns")
+    } catch (e: Exception) {
+        println("❌ Log Error: ${e.message}")
     }
 }
 
-// 1. 引導搜尋狀態 (Turn-yielding)
+fun logFailure(reason: String, userSpeech: String = "") {
+    failedAttempts++
+    try {
+        val file = File("dialogue_logs.txt")
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        val msg = if (userSpeech.isNotEmpty()) "User said: '$userSpeech'" else "Silence/No Response"
+        file.appendText("[$timestamp] [FAIL] Count: $failedAttempts | Reason: $reason | $msg\n")
+        println("⚠️ Logged Failure #$failedAttempts: $reason")
+    } catch (e: Exception) {
+        println("❌ Log Error: ${e.message}")
+    }
+}
+
+// --- 狀態定義 ---
+
 val GuidedSearch: State = state {
     init {
         saveScheduleToDisk()
+        try { File("dialogue_logs.txt").appendText("\n--- New Session ---\n") } catch (_: Exception){}
     }
 
     onEntry {
         if (myCart.isEmpty()) {
-            // 引導使用者看螢幕
             furhat.say("Welcome. To help you plan, you can use the filters on the left side of the screen to find your programme.")
-            delay(300)
+            delay(500)
             furhat.say("First, you can select a specific period to see what fits your schedule.")
-            delay(300)
+            delay(1500)
             furhat.say("You can filter for 7.5 credits for a standard course, or maybe something lighter if you prefer.")
-            // 交還發話權 (Turn-yielding)
+            delay(1500)
             furhat.ask("Select your track at the bottom of the filter, and tell me when you have selected your programme.")
         } else {
-            // 如果已經有課，直接進入規劃模式
             goto(CoursePlanning)
         }
     }
 
-    // 使用者說 "I'm done", "Ready"
     onResponse<IAmDone> {
+        logInteraction(it.text)
         furhat.gesture(Gestures.Smile)
         furhat.say("Great! Now you should see the relevant courses.")
         goto(CoursePlanning)
     }
 
-    // 如果使用者沒回答 "Done" 而是直接說 "Add Java"，我們也接受並轉發
     onResponse<AddCourse> {
+        logInteraction(it.text)
         furhat.say("Ah, you found a course already!")
-        call(CoursePlanning) // 轉發給主狀態
+        val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
+        if (rawName != null) {
+            val foundCourse = CourseDatabase.findCourseByName(rawName)
+            if (foundCourse != null) {
+                if (myCart.any { item -> item.code == foundCourse.code }) {
+                    furhat.say("You already have ${foundCourse.name}.")
+                    goto(CoursePlanning)
+                } else {
+                    tempCourseToAdd = foundCourse
+                    goto(ConfirmAddState)
+                }
+            } else {
+                furhat.say("I couldn't find that course.")
+                call(CoursePlanning)
+            }
+        } else {
+            call(CoursePlanning)
+        }
+    }
+
+    onResponse {
+        logFailure("Unrecognized Intent in GuidedSearch", it.text)
+        furhat.gesture(Gestures.BrowFrown)
+        furhat.ask("I didn't quite get that. Just let me know when you are 'done' selecting filters.")
     }
 
     onNoResponse {
-        furhat.ask("Please let me know when you've selected the filter.")
+        logFailure("No Response in GuidedSearch")
+        furhat.ask("Are you still there? Please tell me when you have selected the filter.")
     }
 }
 
-// 2. 主要規劃狀態
 val CoursePlanning: State = state {
 
     onEntry {
         if (myCart.isEmpty()) {
-            // --- 購物車是空的 ---
             val emptyPrompts = listOf(
                 "Tell me which course code or name you want to add.",
                 "Which course should we add to your plan first?",
-                "Let's get started. What is the name or code of the course?",
-                "I'm ready. Please give me a course name or code.",
-                "To begin, just tell me the course you are looking for."
+                "I'm ready. Please give me a course name or code."
             )
             furhat.say(emptyPrompts.random())
-
         } else {
-            // --- 購物車已有東西 ---
-            // 注意：這裡每一句都要包含 ${myCart.size} 變數
             val size = myCart.size
             val filledPrompts = listOf(
                 "You have $size courses so far. What's next?",
                 "That makes $size courses in your plan. Do you want to add another?",
-                "Okay, currently you have $size courses. Anything else?",
-                "Great, $size courses added. What other course do you have in mind?",
                 "We have $size items in the list. Shall we add more?"
             )
             furhat.say(filledPrompts.random())
         }
-
         furhat.listen()
     }
 
-    // --- 加選課程 ---
+    // --- [新增] 使用者主動結束對話 ---
+    onResponse<FinishPlanning> {
+        logInteraction(it.text)
+
+        // 做最後一次存檔確認
+        saveScheduleToDisk()
+
+        furhat.gesture(Gestures.BigSmile)
+        furhat.say("Alright, your schedule is saved. Good luck with your studies! Byebye!")
+
+        // 進入 Idle 狀態 (結束 Skill 的互動流程)
+        goto(Idle)
+    }
+
     onResponse<AddCourse> {
-        // 因為是 EnumEntity，這裡取 .value 或 .toString()
+        logInteraction(it.text)
         val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
 
         if (rawName != null) {
@@ -126,37 +187,24 @@ val CoursePlanning: State = state {
                 if (myCart.any { item -> item.code == foundCourse.code }) {
                     furhat.gesture(Gestures.Surprise)
                     furhat.say("You already have ${foundCourse.name}.")
+                    furhat.listen()
                 } else {
-                    // [關鍵] 修改前存檔 (Undo)
-                    saveHistory()
-
-                    val targetPeriod = foundCourse.availablePeriods.firstOrNull() ?: "P1"
-                    val newItem = ScheduledCourse(
-                        code = foundCourse.code,
-                        name = foundCourse.name,
-                        credits = foundCourse.credits,
-                        period = targetPeriod
-                    )
-
-                    myCart.add(newItem)
-                    saveScheduleToDisk() // 更新網頁
-
-                    furhat.gesture(Gestures.Nod)
-                    furhat.say("Added ${foundCourse.name} to $targetPeriod.")
+                    tempCourseToAdd = foundCourse
+                    goto(CheckOverloadState)
                 }
             } else {
                 furhat.gesture(Gestures.BrowFrown)
-                // 因為是 EnumEntity，理論上 database 一定有，除非同步出問題
                 furhat.say("I heard $rawName, but I couldn't verify the details.")
+                furhat.listen()
             }
         } else {
             furhat.say("Which course?")
+            furhat.listen()
         }
-        furhat.listen()
     }
 
-    // --- 退選課程 ---
     onResponse<RemoveCourse> {
+        logInteraction(it.text)
         val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
 
         if (rawName != null) {
@@ -165,29 +213,24 @@ val CoursePlanning: State = state {
             }
 
             if (target != null) {
-                saveHistory() // [關鍵] 存檔 (Undo)
-
-                myCart.remove(target)
-                saveScheduleToDisk()
-
-                furhat.gesture(Gestures.Nod)
-                furhat.say("Removed ${target.name}.")
+                tempCourseToRemove = target
+                goto(ConfirmRemoveState)
             } else {
                 furhat.gesture(Gestures.Shake)
                 furhat.say("You don't have ${rawName} in your schedule.")
+                furhat.listen()
             }
         } else {
             furhat.say("Which course to remove?")
+            furhat.listen()
         }
-        furhat.listen()
     }
 
-    // --- [新增] 清除特定 Period ---
     onResponse<ClearPeriod> {
-        val p = it.intent.period?.value // 會拿到 "P1", "P2" 等
+        logInteraction(it.text)
+        val p = it.intent.period?.value
         if (p != null) {
             saveHistory()
-
             val initialSize = myCart.size
             myCart.removeAll { c -> c.period.equals(p, ignoreCase = true) }
 
@@ -197,14 +240,12 @@ val CoursePlanning: State = state {
             } else {
                 furhat.say("Period $p is already empty.")
             }
-        } else {
-            furhat.say("Which period?")
         }
         furhat.listen()
     }
 
-    // --- [新增] 清除全部 ---
     onResponse<ClearAll> {
+        logInteraction(it.text)
         if (myCart.isNotEmpty()) {
             saveHistory()
             myCart.clear()
@@ -217,16 +258,12 @@ val CoursePlanning: State = state {
         furhat.listen()
     }
 
-    // --- [新增] 復原 (Undo) ---
     onResponse<UndoLast> {
+        logInteraction(it.text)
         if (historyStack.isNotEmpty()) {
-            // 從堆疊取出上一個狀態
             val previousState = historyStack.pop()
-            // 還原 myCart
             myCart = previousState.toMutableList()
-            // 更新網頁
             saveScheduleToDisk()
-
             furhat.gesture(Gestures.Nod)
             furhat.say("Undone. I've reverted the last change.")
         } else {
@@ -235,17 +272,184 @@ val CoursePlanning: State = state {
         furhat.listen()
     }
 
-    // --- 檢查課程 ---
     onResponse<CheckCart> {
-        val totalCredits = myCart.sumOf { it.credits }
-        if (myCart.isEmpty()) {
-            furhat.say("You have no courses yet.")
-        } else {
-            val names = myCart.joinToString(", ") { it.code }
-            furhat.say("You have: $names.")
-        }
+        logInteraction(it.text)
+        val names = myCart.joinToString(", ") { it.code }
+        furhat.say("You have: $names.")
         furhat.listen()
     }
 
-    onNoResponse { furhat.listen() }
+    // Catch-all
+    onResponse {
+        logFailure("Unrecognized Intent", it.text)
+        furhat.gesture(Gestures.BrowFrown)
+        furhat.say("Sorry, I didn't catch that.")
+        furhat.listen()
+    }
+
+    onNoResponse {
+        logFailure("No Response")
+        furhat.listen()
+    }
+}
+
+// --- [新增] 中介狀態：檢查學分是否超標 ---
+val CheckOverloadState: State = state {
+    onEntry {
+        val c = tempCourseToAdd
+        if (c != null) {
+            val targetPeriod = c.availablePeriods.firstOrNull() ?: "P1"
+            val currentCredits = myCart.filter { it.period == targetPeriod }.sumOf { it.credits }
+            val newTotal = currentCredits + c.credits
+
+            if (newTotal > 15.0) {
+                goto(OverloadWarningState)
+            } else {
+                goto(ConfirmAddState)
+            }
+        } else {
+            goto(CoursePlanning)
+        }
+    }
+}
+
+// --- [新增] 超修警告狀態 ---
+val OverloadWarningState: State = state {
+    onEntry {
+        val c = tempCourseToAdd!!
+        val p = c.availablePeriods.firstOrNull() ?: "P1"
+        furhat.gesture(Gestures.Oh)
+        furhat.ask("Wait, adding this course will exceed 15 credits in period $p. That is a heavy workload. Are you sure you want to add it?")
+    }
+
+    onResponse<Yes> {
+        logInteraction(it.text)
+
+        // [關鍵修改] 這裡直接執行加選動作，不跳去 ConfirmAddState
+        val c = tempCourseToAdd
+        if (c != null) {
+            saveHistory()
+            val p = c.availablePeriods.firstOrNull() ?: "P1"
+            val newItem = ScheduledCourse(c.code, c.name, c.credits, p)
+            myCart.add(newItem)
+            saveScheduleToDisk()
+
+            furhat.gesture(Gestures.Nod)
+            // 簡單確認
+            furhat.say("Okay, I have added it to your schedule.")
+        }
+
+        tempCourseToAdd = null
+        goto(CoursePlanning)
+    }
+
+    onResponse<No> {
+        logInteraction(it.text)
+        furhat.gesture(Gestures.Nod)
+        furhat.say("Wise choice. Let's find something else.")
+        tempCourseToAdd = null
+        goto(CoursePlanning)
+    }
+
+    onResponse {
+        logFailure("Unrecognized in OverloadWarning", it.text)
+        furhat.ask("Please just say yes or no. Do you still want to add it despite the overload?")
+    }
+}
+
+// --- 確認加選狀態 (一般流程) ---
+val ConfirmAddState: State = state {
+    onEntry {
+        val c = tempCourseToAdd
+        if (c != null) {
+            val p = c.availablePeriods.firstOrNull() ?: "P1"
+            val credits = c.credits
+            furhat.ask("I found ${c.name}. It is $credits credits and runs in period $p. Do you want to add it?")
+        } else {
+            goto(CoursePlanning)
+        }
+    }
+
+    onResponse<Yes> {
+        logInteraction(it.text)
+        val c = tempCourseToAdd
+        if (c != null) {
+            saveHistory()
+            val p = c.availablePeriods.firstOrNull() ?: "P1"
+            val newItem = ScheduledCourse(c.code, c.name, c.credits, p)
+            myCart.add(newItem)
+            saveScheduleToDisk()
+            furhat.gesture(Gestures.Nod)
+            furhat.say("Okay, added.")
+        }
+        tempCourseToAdd = null
+        goto(CoursePlanning)
+    }
+
+    onResponse<No> {
+        logInteraction(it.text)
+        furhat.gesture(Gestures.Smile)
+        furhat.say("Okay, cancelled.")
+        tempCourseToAdd = null
+        goto(CoursePlanning)
+    }
+
+    onResponse<FinishPlanning> {
+        logInteraction(it.text)
+        furhat.say("Okay, let's stop here. Byebye!")
+        goto(Idle)
+    }
+
+    onResponse {
+        logFailure("Unrecognized during Confirmation", it.text)
+        furhat.say("I'll take that as a no.")
+        tempCourseToAdd = null
+        goto(CoursePlanning)
+    }
+}
+
+// --- 確認退選狀態 ---
+val ConfirmRemoveState: State = state {
+    onEntry {
+        val c = tempCourseToRemove
+        if (c != null) {
+            furhat.ask("Are you sure you want to remove ${c.name}?")
+        } else {
+            goto(CoursePlanning)
+        }
+    }
+
+    onResponse<Yes> {
+        logInteraction(it.text)
+        val c = tempCourseToRemove
+        if (c != null) {
+            saveHistory()
+            myCart.remove(c)
+            saveScheduleToDisk()
+            furhat.gesture(Gestures.Nod)
+            furhat.say("Okay, removed.")
+        }
+        tempCourseToRemove = null
+        goto(CoursePlanning)
+    }
+
+    onResponse<No> {
+        logInteraction(it.text)
+        furhat.say("Okay, keeping it.")
+        tempCourseToRemove = null
+        goto(CoursePlanning)
+    }
+
+    onResponse<FinishPlanning> {
+        logInteraction(it.text)
+        furhat.say("Okay, let's stop. Byebye!")
+        goto(Idle)
+    }
+
+    onResponse {
+        logFailure("Unrecognized during Confirmation", it.text)
+        furhat.say("Cancelled.")
+        tempCourseToRemove = null
+        goto(CoursePlanning)
+    }
 }

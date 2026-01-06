@@ -120,3 +120,22 @@ class UndoLast : Intent() {
         )
     }
 }
+
+// Finishing planning schedule
+class FinishPlanning : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "I am finished",
+            "I'm finished",
+            "I finished planning",
+            "I'm done planning",
+            "That's all",
+            "That is it",
+            "Stop",
+            "Goodbye",
+            "End session",
+            "I don't want to add anything else",
+            "No more courses"
+        )
+    }
+}
