@@ -2,6 +2,7 @@ package furhatos.app.courseadvisor.data
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.io.File
 
 // --- 1. JSON 解析結構 ---
 data class JsonCourseWrapper(val detailedInformation: DetailedInfo?)
@@ -62,6 +63,7 @@ object CourseDatabase {
 
                     if (c != null && c.courseCode != null && c.title != null) {
 
+                        // 解析 Period
                         val periodsSet = mutableSetOf<String>()
                         rounds?.forEach { r ->
                             r.round?.courseRoundTerms?.forEach { t ->
@@ -84,13 +86,14 @@ object CourseDatabase {
                     }
                 }
 
+                // 產生 NLU 關鍵字清單
                 val names = allCourses.map { it.name }
                 val codes = allCourses.map { it.code }
                 nluKeywords = names + codes
 
                 println("✅ Database loaded: ${allCourses.size} courses.")
             } else {
-                println("❌ Error: /gui/course_all.json not found in resources.")
+                println("❌ Error: /gui/course_all.json not found.")
             }
         } catch (e: Exception) {
             println("❌ Error loading JSON: ${e.message}")
@@ -102,70 +105,74 @@ object CourseDatabase {
         return nluKeywords
     }
 
-    // --- [核心修改] 智慧搜尋演算法 ---
+    // --- [核心修改] 智慧計分搜尋演算法 ---
     fun findCourseByName(query: String): CourseInfo? {
+        // 正規化使用者輸入
         val rawQuery = query.trim()
 
-        // 1. 正規化：移除所有非英數字元 (處理 "D D 2 4 2 4" -> "DD2424")
-        val cleanQueryForCode = rawQuery.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+        // 1. [解決 Course Code 問題] 強力正規化
+        // 把 "D D 2 4 2 4" 或 "DD 2424" 變成 "dd2424"
+        val cleanQueryForCode = rawQuery.filter { it.isLetterOrDigit() }.lowercase()
 
-        // 2. 搜尋 Course Code (最優先)
         val codeMatch = allCourses.find {
-            it.code.replace(Regex("[^a-zA-Z0-9]"), "").lowercase() == cleanQueryForCode
+            it.code.filter { c -> c.isLetterOrDigit() }.lowercase() == cleanQueryForCode
         }
         if (codeMatch != null) {
-            println("🔎 Exact Code Match: ${codeMatch.code}")
+            println("🔎 Code Match: '$query' -> ${codeMatch.code}")
             return codeMatch
         }
 
-        // 3. 搜尋 Course Name (計分制)
-        // 我們會給每個候選人打分數，最後選分數最高的
+        // 2. [解決 Sound / Music Acoustic 問題] 計分搜尋
+        // 將查詢語句拆成單字 (Tokens)
+        val queryTokens = rawQuery.lowercase()
+            .replace(Regex("[^a-z0-9 ]"), "") // 移除標點
+            .split(" ")
+            .filter { it.isNotBlank() }
 
-        // 將查詢語句拆成單字 (Tokens)，例如 "music acoustic" -> ["music", "acoustic"]
-        val queryTokens = rawQuery.lowercase().split(" ").filter { it.isNotEmpty() }
-
+        // 尋找最佳匹配
         val bestMatch = allCourses.map { course ->
-            val courseNameLower = course.name.lowercase()
-            var score = 0
+            val courseNameTokens = course.name.lowercase()
+                .replace(Regex("[^a-z0-9 ]"), "")
+                .split(" ")
+                .filter { it.isNotBlank() }
 
-            // A. 完全包含 (最重要)
-            if (courseNameLower == rawQuery.lowercase()) {
-                score += 1000
-            }
-            // B. 包含字串 (次重要)
-            else if (courseNameLower.contains(rawQuery.lowercase())) {
-                score += 500
-                // [關鍵] 懲罰長度差異：如果使用者說 "Sound"，"Sound" (5字) 分數會比 "Sound and Vibration" (19字) 高
-                // 差異越小扣分越少
-                val lengthDiff = courseNameLower.length - rawQuery.length
-                score -= lengthDiff // 越接近原始長度分數越高
-            }
-
-            // C. 單字比對 (解決 "Music Acoustic" vs "Music Acoustics")
-            var tokenMatches = 0
-            for (token in queryTokens) {
-                if (courseNameLower.contains(token)) {
-                    tokenMatches++
+            var matches = 0
+            for (qToken in queryTokens) {
+                // [關鍵] 只要課程名稱裡的字 "開頭符合" 查詢字，就算分
+                // 這樣 "acoustic" 可以匹配 "acoustics"
+                if (courseNameTokens.any { cToken -> cToken == qToken || cToken.startsWith(qToken) }) {
+                    matches++
                 }
             }
-            // 如果所有單字都出現了，加分
-            if (tokenMatches > 0) {
-                score += tokenMatches * 100
+
+            // 計算分數 (Jaccard 相似度概念)
+            // 分數 = 匹配單字數 / 查詢與課名的總單字數 (避免短關鍵字誤判長課名)
+            var score = 0.0
+            if (matches > 0) {
+                // 加權：如果完全包含使用者輸入的字串，加分
+                val fullStringBonus = if (course.name.lowercase().contains(rawQuery.lowercase())) 1.0 else 0.0
+
+                // 核心分數：匹配數量越高越好，但若課程名稱很長而只匹配到一個字，分數會被拉低
+                // 例如 Query: "Sound" (1 token)
+                // - Course "Sound": matches=1, len=1. Score = high
+                // - Course "Sound in Interaction": matches=1, len=3. Score = low
+                val precision = matches.toDouble() / queryTokens.size
+                val recall = matches.toDouble() / courseNameTokens.size
+
+                score = (precision + recall + fullStringBonus)
             }
 
-            // 回傳 Pair(課程, 分數)
             course to score
-        }.filter {
-            it.second > 0 // 只保留有相關的
-        }.maxByOrNull {
-            it.second // 取出分數最高的
-        }
+        }.maxByOrNull { it.second } // 取出分數最高的
 
-        if (bestMatch != null) {
-            println("🔎 Smart Match: '${rawQuery}' -> '${bestMatch.first.name}' (Score: ${bestMatch.second})")
+        // 設定一個最低門檻，避免亂抓
+        if (bestMatch != null && bestMatch.second > 0.8) {
+            println("🔎 Smart Name Match: '$query' -> '${bestMatch.first.name}' (Score: ${String.format("%.2f", bestMatch.second)})")
             return bestMatch.first
         }
 
+        // 如果分數都很低，回傳 null
+        println("❌ No good match found for '$query'")
         return null
     }
 }
