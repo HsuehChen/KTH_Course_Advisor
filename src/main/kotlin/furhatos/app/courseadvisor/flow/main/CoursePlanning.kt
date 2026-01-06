@@ -155,7 +155,7 @@ val CoursePlanning: State = state {
             val filledPrompts = listOf(
                 "You have $size courses so far. What's next?",
                 "That makes $size courses in your plan. Do you want to add another?",
-                "We have $size items in the list. Shall we add more?"
+                "We have $size items in the list. What course do you want to add another?"
             )
             furhat.say(filledPrompts.random())
         }
