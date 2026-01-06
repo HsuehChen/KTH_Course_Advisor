@@ -1,6 +1,7 @@
 package furhatos.app.courseadvisor.nlu
 
 import furhatos.nlu.EnumEntity
+import furhatos.nlu.WildcardEntity
 import furhatos.nlu.Intent
 import furhatos.util.Language
 import furhatos.app.courseadvisor.data.CourseDatabase // 引入 Database
@@ -35,6 +36,21 @@ class Period : EnumEntity() {
         )
     }
 }
+
+// [新增] Credits 實體 (辨識常見學分)
+class Credits : EnumEntity() {
+    override fun getEnum(lang: Language): List<String> {
+        return listOf(
+            "7.5:seven point five,seven and a half,7.5",
+            "6.0:six,six credits,6.0,6",
+            "9.0:nine,nine credits,9.0,9",
+            "15.0:fifteen,fifteen credits,15.0,15",
+            "30.0:thirty,thirty credits,30.0,30"
+        )
+    }
+}
+
+class Programme : WildcardEntity("programme", TellProgramme())
 
 // Intent 定義保持不變，但現在 @courseName 會變得非常精準
 class StartPlanning : Intent() {
@@ -163,6 +179,55 @@ class FinishPlanning : Intent() {
             "End session",
             "I don't want to add anything else",
             "No more courses"
+        )
+    }
+}
+
+class TellPeriod(var period: Period? = null) : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "@period",
+            "Period @period",
+            "I want @period",
+            "It is @period"
+        )
+    }
+}
+
+// [新增] 專門回答 Credits
+class TellCredits(var credits: Credits? = null) : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "@credits",
+            "@credits credits",
+            "I want @credits",
+            "It is @credits"
+        )
+    }
+}
+
+// [新增] 專門回答 Programme (使用 Wildcard)
+class TellProgramme(var programme: Programme? = null) : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "@programme",
+            "I choose @programme",
+            "My track is @programme",
+            "Programme @programme"
+        )
+    }
+}
+
+// [新增] 跳過篩選 (例如使用者說 "Any" 或 "Don't care")
+class AnyOption : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "Any",
+            "All",
+            "Doesn't matter",
+            "Any period",
+            "Any credits",
+            "Skip"
         )
     }
 }

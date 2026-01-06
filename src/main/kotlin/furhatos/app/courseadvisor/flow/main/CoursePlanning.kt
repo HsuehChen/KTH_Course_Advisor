@@ -21,6 +21,14 @@ data class ScheduledCourse(
     val period: String
 )
 
+// [新增] 篩選條件資料結構
+data class FilterSettings(
+    var period: String = "",
+    var credits: String = "",
+    var programme: String = ""
+)
+
+
 // --- 全域變數 ---
 var myCart = mutableListOf<ScheduledCourse>()
 val historyStack = ArrayDeque<List<ScheduledCourse>>()
@@ -33,6 +41,9 @@ var tempCourseToRemove: ScheduledCourse? = null
 var dialogueTurns = 0
 var failedAttempts = 0
 
+// 當前篩選
+var currentFilters = FilterSettings()
+
 // --- 工具函式 ---
 
 fun saveScheduleToDisk() {
@@ -43,6 +54,17 @@ fun saveScheduleToDisk() {
         println("✅ Schedule saved to ${file.absolutePath}")
     } catch (e: Exception) {
         println("❌ Failed to save schedule: ${e.message}")
+    }
+}
+// 寫入篩選設定到檔案
+fun saveFiltersToDisk() {
+    try {
+        val file = File("src/main/resources/gui/filter_criteria.json")
+        val json = Gson().toJson(currentFilters)
+        file.writeText(json)
+        println("✅ Filters saved: $json")
+    } catch (e: Exception) {
+        println("❌ Failed to save filters: ${e.message}")
     }
 }
 
@@ -80,22 +102,29 @@ fun logFailure(reason: String, userSpeech: String = "") {
 
 val GuidedSearch: State = state {
     init {
+        currentFilters = FilterSettings()
+        saveFiltersToDisk() // 清空前端顯示
         saveScheduleToDisk()
         try { File("dialogue_logs.txt").appendText("\n--- New Session ---\n") } catch (_: Exception){}
     }
 
     onEntry {
         if (myCart.isEmpty()) {
-            furhat.say("Welcome. To help you plan, you can use the filters on the left side of the screen to find your programme.")
-            delay(500)
-            furhat.say("First, you can select a specific period to see what fits your schedule.")
-            delay(1500)
-            furhat.say("You can filter for 7.5 credits for a standard course, or maybe something lighter if you prefer.")
-            delay(1500)
-            furhat.ask("Select your track at the bottom of the filter, and tell me when you have selected your programme.")
+            furhat.ask("Welcome. To help you plan, you can use the filters on the left side of the screen, or shall I help you filter the course?")
         } else {
             goto(CoursePlanning)
         }
+    }
+
+    onResponse<Yes> {
+        furhat.say("Nice! Let me help you filter the courses.")
+        goto(FilterAskPeriod)
+    }
+
+    onResponse<No> {
+        furhat.say("Ok, First, you can select a specific period and credit to your course")
+        delay(500)
+        furhat.ask("Select your track at the bottom of the filter, and tell me when you have selected your programme.")
     }
 
     onResponse<IAmDone> {
@@ -140,7 +169,162 @@ val GuidedSearch: State = state {
     }
 }
 
+// 1. 問 Period (使用 TellPeriod)
+val FilterAskPeriod: State = state {
+    onEntry {
+        furhat.ask("Which period? 1, 2, 3, or 4?")
+    }
+
+    // 專門監聽 Period 意圖
+    onResponse<TellPeriod> {
+        val p = it.intent.period?.value
+        if (p != null) {
+            currentFilters.period = p
+            saveFiltersToDisk()
+            furhat.gesture(Gestures.Nod)
+            goto(FilterAskCredits)
+        } else {
+            // 有意圖但沒抓到值，轉給下方 text 處理
+            reentry()
+        }
+    }
+
+    onResponse<AnyOption> {
+        currentFilters.period = ""
+        saveFiltersToDisk()
+        furhat.say("All periods.")
+        goto(FilterAskCredits)
+    }
+
+    // Fallback: 直接檢查文字
+    onResponse {
+        val text = it.text.lowercase()
+        var p: String? = null
+
+        if (text.contains("1") || text.contains("one")) p = "P1"
+        else if (text.contains("2") || text.contains("two")) p = "P2"
+        else if (text.contains("3") || text.contains("three")) p = "P3"
+        else if (text.contains("4") || text.contains("four")) p = "P4"
+        else if (text.contains("any")) {
+            currentFilters.period = ""
+            saveFiltersToDisk()
+            goto(FilterAskCredits)
+            return@onResponse
+        }
+
+        if (p != null) {
+            currentFilters.period = p
+            saveFiltersToDisk()
+            furhat.gesture(Gestures.Nod)
+            goto(FilterAskCredits)
+        } else {
+            furhat.ask("Please say a number between 1 and 4.")
+        }
+    }
+}
+
+// 2. 問 Credits (使用 TellCredits)
+val FilterAskCredits: State = state {
+    onEntry {
+        furhat.ask("How many credits? 7.5 or 6.0?")
+    }
+
+    onResponse<TellCredits> {
+        val c = it.intent.credits?.value
+        if (c != null) {
+            currentFilters.credits = c
+            saveFiltersToDisk()
+            goto(FilterAskProgramme)
+        } else {
+            reentry()
+        }
+    }
+
+    onResponse<AnyOption> {
+        currentFilters.credits = ""
+        saveFiltersToDisk()
+        furhat.say("Any credits.")
+        goto(FilterAskProgramme)
+    }
+
+    // Fallback
+    onResponse {
+        val text = it.text.lowercase()
+        var c: String? = null
+
+        if (text.contains("7.5") || text.contains("seven")) c = "7.5"
+        else if (text.contains("6") || text.contains("six")) c = "6.0"
+        else if (text.contains("9") || text.contains("nine")) c = "9.0"
+        else if (text.contains("15") || text.contains("fifteen")) c = "15.0"
+        else if (text.contains("30")) c = "30.0"
+        else if (text.contains("any")) {
+            currentFilters.credits = ""
+            saveFiltersToDisk()
+            goto(FilterAskProgramme)
+            return@onResponse
+        }
+
+        if (c != null) {
+            currentFilters.credits = c
+            saveFiltersToDisk()
+            goto(FilterAskProgramme)
+        } else {
+            furhat.ask("Please say 7.5, 6.0 or any.")
+        }
+    }
+}
+
+// 3. 問 Programme (使用 TellProgramme 或直接文字)
+val FilterAskProgramme: State = state {
+    onEntry {
+        furhat.ask("Which programme track? Like Computer Science?")
+    }
+
+    onResponse<TellProgramme> {
+        val prog = it.intent.programme?.text
+        if (prog != null) {
+            currentFilters.programme = prog
+            saveFiltersToDisk()
+            furhat.say("Filtering for $prog.")
+            goto(CoursePlanning)
+        } else {
+            reentry()
+        }
+    }
+
+    onResponse<AnyOption> {
+        currentFilters.programme = ""
+        saveFiltersToDisk()
+        furhat.say("Showing all programmes.")
+        goto(CoursePlanning)
+    }
+
+    // 針對 Programme，任何無法辨識的文字我們都假設是學程名稱
+    onResponse {
+        val text = it.text
+        if (text.length > 2) { // 避免 "um", "ah"
+            currentFilters.programme = text
+            saveFiltersToDisk()
+            furhat.say("Filtering for $text.")
+            goto(CoursePlanning)
+        } else {
+            furhat.ask("Please tell me the programme name again.")
+        }
+    }
+}
+
 val CoursePlanning: State = state {
+
+    val handleStop: TriggerRunner<*>.() -> Unit = {
+        // 做最後一次存檔確認
+        saveScheduleToDisk()
+
+        furhat.gesture(Gestures.BigSmile)
+        furhat.say("Alright, your schedule is saved. Good luck with your studies! Byebye!")
+
+        // 進入 Idle 狀態 (結束 Skill 的互動流程)
+        goto(Idle)
+    }
 
     onEntry {
         if (myCart.isEmpty()) {
@@ -162,18 +346,15 @@ val CoursePlanning: State = state {
         furhat.listen()
     }
 
-    // --- [新增] 使用者主動結束對話 ---
-    onResponse<FinishPlanning> {
+    // 使用者主動結束對話 ---
+    onResponse<FinishPlanning>{
         logInteraction(it.text)
-
-        // 做最後一次存檔確認
-        saveScheduleToDisk()
-
-        furhat.gesture(Gestures.BigSmile)
-        furhat.say("Alright, your schedule is saved. Good luck with your studies! Byebye!")
-
-        // 進入 Idle 狀態 (結束 Skill 的互動流程)
-        goto(Idle)
+        handleStop()
+    }
+    // 使用者回答no need to plan
+    onResponse<No>{
+        logInteraction(it.text)
+        handleStop()
     }
 
     onResponse<AddCourse> {

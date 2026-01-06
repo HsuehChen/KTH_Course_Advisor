@@ -79,19 +79,19 @@
     <div class="search-panel">
         <div class="filter-section">
             <div class="filter-group" style="grid-column: span 2;">
-                <label>Search Course</label>
+                <label for="searchInput">Search Course</label>
                 <input type="text" id="searchInput" placeholder="E.g. DD2424 or Deep Learning">
             </div>
             <div class="filter-group">
-                <label>Period</label>
+                <label for="periodSelect">Period</label>
                 <select id="periodSelect"><option value="">All</option></select>
             </div>
             <div class="filter-group">
-                <label>Credits</label>
+                <label for="creditSelect">Credits</label>
                 <select id="creditSelect"><option value="">All</option></select>
             </div>
             <div class="filter-group" style="grid-column: span 2;">
-                <label>Programme</label>
+                <label for="progSelect">Programme</label>
                 <select id="progSelect"><option value="">All Programmes</option></select>
             </div>
         </div>
@@ -430,30 +430,22 @@
 
     // --- [關鍵修正] 定時讀取 my_schedule.json ---
     setInterval(() => {
-        // 加上時間戳記避免快取 (?t=...)
         fetch('my_schedule.json?t=' + new Date().getTime())
             .then(res => {
-                // 如果檔案還不存在(還沒加選過)，可能會 404，這裡做處理
                 if (!res.ok) throw new Error("File not found");
                 return res.json();
             })
             .then(data => {
-                 // 簡單比對是否更新
                  if (data && JSON.stringify(data) !== JSON.stringify(lastState)) {
                      console.log("Schedule updated from file:", data);
                      lastState = data;
                      mySchedule = [];
 
-                     // 根據讀到的 JSON 重新渲染
                      data.forEach(item => {
-                         // item 格式: {code, name, credits, period}
-                         // 嘗試從 allCourses 找詳細資料以求完整，若無則用 item 的資訊
                          const details = allCourses.find(c => c.code === item.code);
-
                          if (details) {
                              mySchedule.push({ ...details, assignedPeriod: item.period });
                          } else {
-                             // 如果資料庫找不到(例如假資料)，直接用 JSON 裡的
                              mySchedule.push({
                                  code: item.code,
                                  name: item.name,
@@ -466,10 +458,83 @@
                  }
             })
             .catch(err => {
-                // 檔案可能還沒產生，這是正常的，忽略即可
+                // 檔案可能還沒產生
             });
     }, 1000); // 每秒檢查一次
     let lastState = [];
+
+    // --- [新增] 監聽篩選條件 (filter_criteria.json) ---
+    let lastFilterState = "";
+
+    setInterval(() => {
+        fetch('filter_criteria.json?t=' + new Date().getTime())
+            .then(res => {
+                if (!res.ok) throw new Error("No filter file");
+                return res.json();
+            })
+            .then(data => {
+                // 檢查是否更新
+                if (JSON.stringify(data) !== lastFilterState) {
+                    console.log("Applying filters from Furhat:", data);
+                    lastFilterState = JSON.stringify(data);
+
+                    // 1. 更新 Period
+                    const pSelect = document.getElementById('periodSelect');
+                    if (data.period) {
+                        pSelect.value = data.period; // "P1"
+                    } else {
+                        pSelect.value = ""; // Any
+                    }
+
+                    // 2. 更新 Credits
+                    const cSelect = document.getElementById('creditSelect');
+                    if (data.credits) {
+                        // 嘗試尋找匹配的數值
+                        let found = false;
+                        // 先試 value
+                        cSelect.value = data.credits;
+                        if (cSelect.selectedIndex !== -1) found = true;
+
+                        // 沒找到就試 text (模糊比對)
+                        if (!found) {
+                            for (let i = 0; i < cSelect.options.length; i++) {
+                                if (cSelect.options[i].text.includes(data.credits)) {
+                                    cSelect.selectedIndex = i;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        cSelect.value = "";
+                    }
+
+                    // 3. 更新 Programme (模糊比對)
+                    const progSelect = document.getElementById('progSelect');
+                    const targetProg = data.programme ? data.programme.toLowerCase() : "";
+
+                    if (targetProg) {
+                        let found = false;
+                        for (let i = 0; i < progSelect.options.length; i++) {
+                            const optText = progSelect.options[i].text.toLowerCase();
+                            // 如果選項文字包含使用者說的 (例如 "computer science")
+                            if (optText.includes(targetProg)) {
+                                progSelect.selectedIndex = i;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) console.log("Prog filter not found:", targetProg);
+                    } else {
+                        progSelect.value = "";
+                    }
+
+                    // 4. 觸發篩選
+                    filterCourses();
+                }
+            })
+            .catch(() => { });
+    }, 1000);
 </script>
 
 </body>
