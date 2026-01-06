@@ -31,7 +31,7 @@ val Greeting: State = state(Parent) {
 
     onResponse<StartPlanning> {
         furhat.say("Okay, let's look at your schedule.")
-        goto(GuidedSearch)
+        goto(CoursePlanning)
     }
 
     onResponse{

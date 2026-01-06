@@ -5,6 +5,14 @@ import furhatos.nlu.Intent
 import furhatos.util.Language
 import furhatos.app.courseadvisor.data.CourseDatabase // 引入 Database
 
+// 1. [修改] 使用帶有同義詞的清單
+class CourseCode : EnumEntity() {
+    override fun getEnum(lang: Language): List<String> {
+        // 這會回傳 ["DT2212:DT 2212,D T 2 2 1 2...", ...]
+        return CourseDatabase.getNluList()
+    }
+}
+
 // EnumEntity 並動態載入清單
 class CourseName : EnumEntity() {
 
@@ -14,6 +22,7 @@ class CourseName : EnumEntity() {
         return CourseDatabase.getNluList()
     }
 }
+
 
 // Period Entity，用來辨識學期
 class Period : EnumEntity() {
@@ -32,29 +41,47 @@ class StartPlanning : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(
             "I want to plan my courses",
-            "Let's plan my schedule"
+            "Let's plan my schedule",
+            "Start planning"
         )
     }
 }
 
-class AddCourse(var courseName: CourseName? = null) : Intent() {
+class AddCourse(
+    var code: CourseCode? = null,
+    var courseName: CourseName? = null
+) : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(
             "Add @courseName",
             "I want to take @courseName",
+            "I want to add @courseName",
             "Sign me up for @courseName",
             "Add @courseName to my schedule",
-            "@courseName"
+            "@courseName",
+
+            "@code",
+            "Add @code",
+            "I want @code",
+            "Course @code",
+            "I want to add @code"
         )
     }
 }
 
-class RemoveCourse(var courseName: CourseName? = null) : Intent() {
+class RemoveCourse(
+    var code: CourseCode? = null,
+    var courseName: CourseName? = null
+) : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(
             "Remove @courseName",
             "Delete @courseName",
-            "Drop @courseName"
+            "Drop @courseName",
+            "Remove course @courseName",
+            "Delete code @code",
+            "Remove @code",
+            "Delete @code"
         )
     }
 }

@@ -2,7 +2,7 @@ package furhatos.app.courseadvisor.data
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import java.io.File
+import java.lang.Math.abs
 
 // --- 1. JSON 解析結構 ---
 data class JsonCourseWrapper(val detailedInformation: DetailedInfo?)
@@ -43,6 +43,8 @@ data class CourseInfo(
 object CourseDatabase {
 
     var allCourses: List<CourseInfo> = emptyList()
+
+    // 這裡存的是 NLU 用的 Enum 定義字串
     var nluKeywords: List<String> = emptyList()
 
     init {
@@ -63,7 +65,6 @@ object CourseDatabase {
 
                     if (c != null && c.courseCode != null && c.title != null) {
 
-                        // 解析 Period
                         val periodsSet = mutableSetOf<String>()
                         rounds?.forEach { r ->
                             r.round?.courseRoundTerms?.forEach { t ->
@@ -86,12 +87,29 @@ object CourseDatabase {
                     }
                 }
 
-                // 產生 NLU 關鍵字清單
+                // [關鍵修改] 產生 NLU 關鍵字清單 (包含同義詞變體)
+                // 格式: "標準值:同義詞1,同義詞2,同義詞3"
+                val codeEnums = allCourses.map { course ->
+                    val code = course.code // e.g., "DD2424"
+
+                    // 變體 1: 您要求的「英文與數字分開」 (e.g., "DD 2424")
+                    // Regex 解釋: 找一個位置，左邊非數字(\D)，右邊是數字(\d)，插入空格
+                    val splitCode = code.replace(Regex("(?<=\\D)(?=\\d)"), " ")
+
+                    // 變體 2: 全分開 (e.g., "D D 2 4 2 4")，以防萬一
+                    val spacedCode = code.toCharArray().joinToString(" ")
+
+                    // 組合: "DD2424:DD2424,DD 2424,D D 2 4 2 4"
+                    "$code:$code,$splitCode,$spacedCode"
+                }
+
                 val names = allCourses.map { it.name }
-                val codes = allCourses.map { it.code }
-                nluKeywords = names + codes
+
+                // 將名稱和代碼(含同義詞)合併
+                nluKeywords = names + codeEnums
 
                 println("✅ Database loaded: ${allCourses.size} courses.")
+                println("✅ NLU Keywords generated with synonyms (e.g., 'DD 2424').")
             } else {
                 println("❌ Error: /gui/course_all.json not found.")
             }
@@ -105,31 +123,31 @@ object CourseDatabase {
         return nluKeywords
     }
 
-    // --- [核心修改] 智慧計分搜尋演算法 ---
+    // --- 智慧搜尋演算法 ---
     fun findCourseByName(query: String): CourseInfo? {
-        // 正規化使用者輸入
         val rawQuery = query.trim()
 
-        // 1. [解決 Course Code 問題] 強力正規化
-        // 把 "D D 2 4 2 4" 或 "DD 2424" 變成 "dd2424"
+        // 1. [Course Code 修正]
+        // 不管 NLU 傳進來的是 "DD 2424" 還是 "D D 2 4 2 4"，我們全部把空格拔掉再比對
         val cleanQueryForCode = rawQuery.filter { it.isLetterOrDigit() }.lowercase()
 
+        // 使用 contains 增加容錯
         val codeMatch = allCourses.find {
-            it.code.filter { c -> c.isLetterOrDigit() }.lowercase() == cleanQueryForCode
+            val cleanCode = it.code.filter { c -> c.isLetterOrDigit() }.lowercase()
+            cleanQueryForCode.contains(cleanCode) && cleanCode.length >= 4
         }
+
         if (codeMatch != null) {
             println("🔎 Code Match: '$query' -> ${codeMatch.code}")
             return codeMatch
         }
 
-        // 2. [解決 Sound / Music Acoustic 問題] 計分搜尋
-        // 將查詢語句拆成單字 (Tokens)
+        // 2. [課程名稱計分]
         val queryTokens = rawQuery.lowercase()
-            .replace(Regex("[^a-z0-9 ]"), "") // 移除標點
+            .replace(Regex("[^a-z0-9 ]"), "")
             .split(" ")
             .filter { it.isNotBlank() }
 
-        // 尋找最佳匹配
         val bestMatch = allCourses.map { course ->
             val courseNameTokens = course.name.lowercase()
                 .replace(Regex("[^a-z0-9 ]"), "")
@@ -138,40 +156,30 @@ object CourseDatabase {
 
             var matches = 0
             for (qToken in queryTokens) {
-                // [關鍵] 只要課程名稱裡的字 "開頭符合" 查詢字，就算分
-                // 這樣 "acoustic" 可以匹配 "acoustics"
+                // 字首比對
                 if (courseNameTokens.any { cToken -> cToken == qToken || cToken.startsWith(qToken) }) {
                     matches++
                 }
             }
 
-            // 計算分數 (Jaccard 相似度概念)
-            // 分數 = 匹配單字數 / 查詢與課名的總單字數 (避免短關鍵字誤判長課名)
             var score = 0.0
             if (matches > 0) {
-                // 加權：如果完全包含使用者輸入的字串，加分
-                val fullStringBonus = if (course.name.lowercase().contains(rawQuery.lowercase())) 1.0 else 0.0
-
-                // 核心分數：匹配數量越高越好，但若課程名稱很長而只匹配到一個字，分數會被拉低
-                // 例如 Query: "Sound" (1 token)
-                // - Course "Sound": matches=1, len=1. Score = high
-                // - Course "Sound in Interaction": matches=1, len=3. Score = low
                 val precision = matches.toDouble() / queryTokens.size
                 val recall = matches.toDouble() / courseNameTokens.size
-
-                score = (precision + recall + fullStringBonus)
+                val lenDiff = abs(courseNameTokens.size - queryTokens.size)
+                val lengthPenalty = lenDiff * 0.1
+                val fullStringBonus = if (course.name.lowercase().contains(rawQuery.lowercase())) 0.5 else 0.0
+                score = (precision + recall + fullStringBonus) - lengthPenalty
             }
 
             course to score
-        }.maxByOrNull { it.second } // 取出分數最高的
+        }.maxByOrNull { it.second }
 
-        // 設定一個最低門檻，避免亂抓
-        if (bestMatch != null && bestMatch.second > 0.8) {
+        if (bestMatch != null && bestMatch.second > 0.6) {
             println("🔎 Smart Name Match: '$query' -> '${bestMatch.first.name}' (Score: ${String.format("%.2f", bestMatch.second)})")
             return bestMatch.first
         }
 
-        // 如果分數都很低，回傳 null
         println("❌ No good match found for '$query'")
         return null
     }
