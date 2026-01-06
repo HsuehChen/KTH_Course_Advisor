@@ -236,9 +236,9 @@ val CoursePlanning: State = state {
 
             if (myCart.size < initialSize) {
                 saveScheduleToDisk()
-                furhat.say("Cleared all courses from Period $p.")
+                furhat.say("Cleared all courses from $p.")
             } else {
-                furhat.say("Period $p is already empty.")
+                furhat.say("$p is already empty.")
             }
         }
         furhat.listen()
@@ -319,7 +319,7 @@ val OverloadWarningState: State = state {
         val c = tempCourseToAdd!!
         val p = c.availablePeriods.firstOrNull() ?: "P1"
         furhat.gesture(Gestures.Oh)
-        furhat.ask("Wait, adding this course will exceed 15 credits in period $p. That is a heavy workload. Are you sure you want to add it?")
+        furhat.ask("Wait, adding this course will exceed 15 credits in $p. That is a heavy workload. Are you sure you want to add it?")
     }
 
     onResponse<Yes> {
@@ -364,7 +364,7 @@ val ConfirmAddState: State = state {
         if (c != null) {
             val p = c.availablePeriods.firstOrNull() ?: "P1"
             val credits = c.credits
-            furhat.ask("I found ${c.name}. It is $credits credits and runs in period $p. Do you want to add it?")
+            furhat.ask("I found ${c.name}. It is $credits credits and runs in $p. Do you want to add it?")
         } else {
             goto(CoursePlanning)
         }

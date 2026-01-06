@@ -2,9 +2,8 @@ package furhatos.app.courseadvisor.data
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import java.io.File
 
-// --- 1. JSON 解析結構 (擴充以支援 Period 解析) ---
+// --- 1. JSON 解析結構 ---
 data class JsonCourseWrapper(val detailedInformation: DetailedInfo?)
 data class DetailedInfo(val course: JsonCourse?, val roundInfos: List<RoundInfo>?)
 
@@ -23,7 +22,6 @@ data class Syllabus(
     val examComments: String?
 )
 
-// 用來解析學期 (Period) 的深層結構
 data class RoundInfo(val round: Round?)
 data class Round(val courseRoundTerms: List<Term>?)
 data class Term(
@@ -33,21 +31,17 @@ data class Term(
     val creditsP4: Double?
 )
 
-// --- 2. 程式內部使用的乾淨格式 ---
+// --- 2. 內部使用的資料結構 ---
 data class CourseInfo(
     val code: String,
     val name: String,
     val credits: Double,
-    // 解析出來的真實可用時段，例如 ["P1", "P2"]
     val availablePeriods: List<String>
 )
 
 object CourseDatabase {
 
-    // 儲存所有解析後的課程物件
     var allCourses: List<CourseInfo> = emptyList()
-
-    // 儲存給 NLU 使用的關鍵字清單 (這裡暫時保留，若使用 WildcardEntity 則主要依賴 findCourseByName)
     var nluKeywords: List<String> = emptyList()
 
     init {
@@ -56,26 +50,19 @@ object CourseDatabase {
 
     private fun loadCourses() {
         try {
-            // 讀取 JSON 檔案
-            // 您原本的路徑是 "/gui/course_all.json"，這裡沿用您的設定
-            // 若讀不到，請確認檔案是否真的在 src/main/resources/gui/ 底下
             val jsonString = this::class.java.getResource("/gui/course_all.json")?.readText()
 
             if (jsonString != null) {
                 val listType = object : TypeToken<List<JsonCourseWrapper>>() {}.type
                 val rawList: List<JsonCourseWrapper> = Gson().fromJson(jsonString, listType)
 
-                // 轉換並過濾無效資料
                 allCourses = rawList.mapNotNull { wrapper ->
                     val c = wrapper.detailedInformation?.course
                     val rounds = wrapper.detailedInformation?.roundInfos
 
                     if (c != null && c.courseCode != null && c.title != null) {
 
-                        // --- [關鍵改進] 解析真實的 Period ---
                         val periodsSet = mutableSetOf<String>()
-
-                        // 遍歷所有的開課回合，檢查哪個時段有學分
                         rounds?.forEach { r ->
                             r.round?.courseRoundTerms?.forEach { t ->
                                 if ((t.creditsP1 ?: 0.0) > 0) periodsSet.add("P1")
@@ -84,8 +71,6 @@ object CourseDatabase {
                                 if ((t.creditsP4 ?: 0.0) > 0) periodsSet.add("P4")
                             }
                         }
-
-                        // 如果完全沒抓到 Period (防呆)，預設給 P1，並排序
                         val finalPeriods = if (periodsSet.isEmpty()) listOf("P1") else periodsSet.toList().sorted()
 
                         CourseInfo(
@@ -99,15 +84,11 @@ object CourseDatabase {
                     }
                 }
 
-                // 產生關鍵字清單 (給 NLU 的 EnumEntity 用，若有需要)
                 val names = allCourses.map { it.name }
                 val codes = allCourses.map { it.code }
                 nluKeywords = names + codes
 
                 println("✅ Database loaded: ${allCourses.size} courses.")
-                if (allCourses.isNotEmpty()) {
-                    println("ℹ️ Example: ${allCourses.first().name} runs in ${allCourses.first().availablePeriods}")
-                }
             } else {
                 println("❌ Error: /gui/course_all.json not found in resources.")
             }
@@ -121,25 +102,68 @@ object CourseDatabase {
         return nluKeywords
     }
 
-    // --- [關鍵改進] 模糊搜尋方法 ---
+    // --- [核心修改] 智慧搜尋演算法 ---
     fun findCourseByName(query: String): CourseInfo? {
-        val q = query.trim().lowercase()
+        val rawQuery = query.trim()
 
-        // 1. 先嘗試代碼完全比對 (例如 "DD2424")
-        val exactCode = allCourses.find { it.code.equals(q, ignoreCase = true) }
-        if (exactCode != null) return exactCode
+        // 1. 正規化：移除所有非英數字元 (處理 "D D 2 4 2 4" -> "DD2424")
+        val cleanQueryForCode = rawQuery.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
 
-        // 2. 再嘗試名稱「包含」比對 (例如 "Energy Business" 能找到 "Energy Business Models")
-        // 我們優先找字串長度最短的匹配項 (通常代表最精準的匹配)，或者直接回傳第一個
-        val matches = allCourses.filter {
-            it.name.lowercase().contains(q)
+        // 2. 搜尋 Course Code (最優先)
+        val codeMatch = allCourses.find {
+            it.code.replace(Regex("[^a-zA-Z0-9]"), "").lowercase() == cleanQueryForCode
+        }
+        if (codeMatch != null) {
+            println("🔎 Exact Code Match: ${codeMatch.code}")
+            return codeMatch
         }
 
-        if (matches.isNotEmpty()) {
-            // 除錯用：印出找到了什麼
-            println("🔎 Fuzzy search for '$query' found: ${matches.map { it.name }}")
-            // 這裡回傳第一個匹配的結果
-            return matches.first()
+        // 3. 搜尋 Course Name (計分制)
+        // 我們會給每個候選人打分數，最後選分數最高的
+
+        // 將查詢語句拆成單字 (Tokens)，例如 "music acoustic" -> ["music", "acoustic"]
+        val queryTokens = rawQuery.lowercase().split(" ").filter { it.isNotEmpty() }
+
+        val bestMatch = allCourses.map { course ->
+            val courseNameLower = course.name.lowercase()
+            var score = 0
+
+            // A. 完全包含 (最重要)
+            if (courseNameLower == rawQuery.lowercase()) {
+                score += 1000
+            }
+            // B. 包含字串 (次重要)
+            else if (courseNameLower.contains(rawQuery.lowercase())) {
+                score += 500
+                // [關鍵] 懲罰長度差異：如果使用者說 "Sound"，"Sound" (5字) 分數會比 "Sound and Vibration" (19字) 高
+                // 差異越小扣分越少
+                val lengthDiff = courseNameLower.length - rawQuery.length
+                score -= lengthDiff // 越接近原始長度分數越高
+            }
+
+            // C. 單字比對 (解決 "Music Acoustic" vs "Music Acoustics")
+            var tokenMatches = 0
+            for (token in queryTokens) {
+                if (courseNameLower.contains(token)) {
+                    tokenMatches++
+                }
+            }
+            // 如果所有單字都出現了，加分
+            if (tokenMatches > 0) {
+                score += tokenMatches * 100
+            }
+
+            // 回傳 Pair(課程, 分數)
+            course to score
+        }.filter {
+            it.second > 0 // 只保留有相關的
+        }.maxByOrNull {
+            it.second // 取出分數最高的
+        }
+
+        if (bestMatch != null) {
+            println("🔎 Smart Match: '${rawQuery}' -> '${bestMatch.first.name}' (Score: ${bestMatch.second})")
+            return bestMatch.first
         }
 
         return null
