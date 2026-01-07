@@ -4,7 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.lang.Math.abs
 
-// --- 1. JSON Parsing Structures ---
+// --- 1. JSON 解析結構 ---
 data class JsonCourseWrapper(val detailedInformation: DetailedInfo?)
 data class DetailedInfo(val course: JsonCourse?, val roundInfos: List<RoundInfo>?)
 
@@ -32,7 +32,7 @@ data class Term(
     val creditsP4: Double?
 )
 
-// --- 2. Internal Data Structure ---
+// --- 2. 內部使用的資料結構 ---
 data class CourseInfo(
     val code: String,
     val name: String,
@@ -44,7 +44,7 @@ object CourseDatabase {
 
     var allCourses: List<CourseInfo> = emptyList()
 
-    // Strings for NLU EnumEntity definition
+    // 這裡存的是 NLU 用的 Enum 定義字串
     var nluKeywords: List<String> = emptyList()
 
     init {
@@ -137,24 +137,23 @@ object CourseDatabase {
         }
     }
 
+
     fun getNluList(): List<String> {
         return nluKeywords
     }
 
-    // --- Smart Search Algorithm ---
+    // --- 智慧搜尋演算法 ---
     fun findCourseByName(query: String): CourseInfo? {
         val rawQuery = query.trim()
 
-        // 1. [Course Code Fix]
-        // Remove ALL non-alphanumeric chars.
-        // Input "L H 2 3 8 V" becomes "lh238v", matches DB "LH238V"
+        // 1. [Course Code 修正]
+        // 不管 NLU 傳進來的是 "DD 2424" 還是 "D D 2 4 2 4"，我們全部把空格拔掉再比對
         val cleanQueryForCode = rawQuery.filter { it.isLetterOrDigit() }.lowercase()
 
-        // Use 'contains' to allow flexibility (e.g. "add LH238V")
+        // 使用 contains 增加容錯
         val codeMatch = allCourses.find {
             val cleanCode = it.code.filter { c -> c.isLetterOrDigit() }.lowercase()
-            // Ensure length >= 3 to avoid matching "I am 20" to a course named "20"
-            cleanQueryForCode.contains(cleanCode) && cleanCode.length >= 3
+            cleanQueryForCode.contains(cleanCode) && cleanCode.length >= 4
         }
 
         if (codeMatch != null) {
@@ -162,7 +161,7 @@ object CourseDatabase {
             return codeMatch
         }
 
-        // 2. [Course Name Scoring]
+        // 2. [課程名稱計分]
         val queryTokens = rawQuery.lowercase()
             .replace(Regex("[^a-z0-9 ]"), "")
             .split(" ")
@@ -176,7 +175,7 @@ object CourseDatabase {
 
             var matches = 0
             for (qToken in queryTokens) {
-                // StartsWith logic handles plurals (Acoustic vs Acoustics)
+                // 字首比對
                 if (courseNameTokens.any { cToken -> cToken == qToken || cToken.startsWith(qToken) }) {
                     matches++
                 }
@@ -189,7 +188,6 @@ object CourseDatabase {
                 val lenDiff = abs(courseNameTokens.size - queryTokens.size)
                 val lengthPenalty = lenDiff * 0.1
                 val fullStringBonus = if (course.name.lowercase().contains(rawQuery.lowercase())) 0.5 else 0.0
-
                 score = (precision + recall + fullStringBonus) - lengthPenalty
             }
 
