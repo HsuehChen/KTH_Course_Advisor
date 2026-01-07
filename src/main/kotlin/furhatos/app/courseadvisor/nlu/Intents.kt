@@ -126,11 +126,22 @@ class IAmDone : Intent() {
     }
 }
 
+class Sure : Intent() {
+    override fun getExamples(lang: Language): List<String> {
+        return listOf(
+            "For sure",
+            "Sure"
+        )
+    }
+}
+
 // 2. 清除特定 Period
 class ClearPeriod(var period: Period? = null) : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(
             "Clear all courses in @period",
+            "Delete all courses in @period",
+            "Remove all courses in @period",
             "Remove everything from @period",
             "Clear @period",
             "Reset @period"
@@ -146,7 +157,10 @@ class ClearAll : Intent() {
             "Remove everything",
             "Reset my schedule",
             "Empty cart",
-            "Clear all"
+            "Clear all",
+            "Delete everything",
+            "Delete all",
+            "Delete all courses"
         )
     }
 }

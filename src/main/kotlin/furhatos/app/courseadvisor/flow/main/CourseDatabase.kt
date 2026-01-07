@@ -4,7 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.lang.Math.abs
 
-// --- 1. JSON 解析結構 ---
+// --- 1. JSON Parsing Structures ---
 data class JsonCourseWrapper(val detailedInformation: DetailedInfo?)
 data class DetailedInfo(val course: JsonCourse?, val roundInfos: List<RoundInfo>?)
 
@@ -32,7 +32,7 @@ data class Term(
     val creditsP4: Double?
 )
 
-// --- 2. 內部使用的資料結構 ---
+// --- 2. Internal Data Structure ---
 data class CourseInfo(
     val code: String,
     val name: String,
@@ -44,7 +44,7 @@ object CourseDatabase {
 
     var allCourses: List<CourseInfo> = emptyList()
 
-    // 這裡存的是 NLU 用的 Enum 定義字串
+    // Strings for NLU EnumEntity definition
     var nluKeywords: List<String> = emptyList()
 
     init {
@@ -87,29 +87,47 @@ object CourseDatabase {
                     }
                 }
 
-                // [關鍵修改] 產生 NLU 關鍵字清單 (包含同義詞變體)
-                // 格式: "標準值:同義詞1,同義詞2,同義詞3"
+                // [CRITICAL UPDATE] Robust Course Code Variant Generation
+                // This handles DD2424, LH238V, FAG3109, etc.
                 val codeEnums = allCourses.map { course ->
-                    val code = course.code // e.g., "DD2424"
+                    val code = course.code // e.g., "LH238V"
 
-                    // 變體 1: 您要求的「英文與數字分開」 (e.g., "DD 2424")
-                    // Regex 解釋: 找一個位置，左邊非數字(\D)，右邊是數字(\d)，插入空格
-                    val splitCode = code.replace(Regex("(?<=\\D)(?=\\d)"), " ")
+                    // Variant 1: Spaced characters (ASR often spells it out)
+                    // "L H 2 3 8 V"
+                    val allSpaced = code.map { "$it" }.joinToString(" ")
 
-                    // 變體 2: 全分開 (e.g., "D D 2 4 2 4")，以防萬一
-                    val spacedCode = code.toCharArray().joinToString(" ")
+                    // Variant 2: Split distinct groups of Letters vs Numbers
+                    // This regex puts a space whenever a Letter touches a Number or vice-versa
+                    // "LH238V" -> "LH 238 V"
+                    // "FAG3109" -> "FAG 3109"
+                    // "DD2424" -> "DD 2424"
+                    val splitBoundaries = code.replace(Regex("(?<=[a-zA-Z])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z])"), " ")
 
-                    // 組合: "DD2424:DD2424,DD 2424,D D 2 4 2 4"
-                    "$code:$code,$splitCode,$spacedCode"
+                    // Variant 3: Prefix Split (Split only after the first letter group)
+                    // Most common way to say it: "LH 238V"
+                    // We find the first digit and split there.
+                    val firstDigitIndex = code.indexOfFirst { it.isDigit() }
+                    val prefixSplit = if (firstDigitIndex > 0) {
+                        code.substring(0, firstDigitIndex) + " " + code.substring(firstDigitIndex)
+                    } else {
+                        code
+                    }
+
+                    // Combine all unique variants into the NLU format: "StandardValue:Synonym1,Synonym2..."
+                    val variants = listOf(code, allSpaced, splitBoundaries, prefixSplit)
+                        .distinct() // Remove duplicates
+                        .joinToString(",")
+
+                    "$code:$variants"
                 }
 
                 val names = allCourses.map { it.name }
 
-                // 將名稱和代碼(含同義詞)合併
+                // Combine names and code variants for the NLU
                 nluKeywords = names + codeEnums
 
                 println("✅ Database loaded: ${allCourses.size} courses.")
-                println("✅ NLU Keywords generated with synonyms (e.g., 'DD 2424').")
+                println("✅ NLU Keywords generated with robust code synonyms.")
             } else {
                 println("❌ Error: /gui/course_all.json not found.")
             }
@@ -123,18 +141,20 @@ object CourseDatabase {
         return nluKeywords
     }
 
-    // --- 智慧搜尋演算法 ---
+    // --- Smart Search Algorithm ---
     fun findCourseByName(query: String): CourseInfo? {
         val rawQuery = query.trim()
 
-        // 1. [Course Code 修正]
-        // 不管 NLU 傳進來的是 "DD 2424" 還是 "D D 2 4 2 4"，我們全部把空格拔掉再比對
+        // 1. [Course Code Fix]
+        // Remove ALL non-alphanumeric chars.
+        // Input "L H 2 3 8 V" becomes "lh238v", matches DB "LH238V"
         val cleanQueryForCode = rawQuery.filter { it.isLetterOrDigit() }.lowercase()
 
-        // 使用 contains 增加容錯
+        // Use 'contains' to allow flexibility (e.g. "add LH238V")
         val codeMatch = allCourses.find {
             val cleanCode = it.code.filter { c -> c.isLetterOrDigit() }.lowercase()
-            cleanQueryForCode.contains(cleanCode) && cleanCode.length >= 4
+            // Ensure length >= 3 to avoid matching "I am 20" to a course named "20"
+            cleanQueryForCode.contains(cleanCode) && cleanCode.length >= 3
         }
 
         if (codeMatch != null) {
@@ -142,7 +162,7 @@ object CourseDatabase {
             return codeMatch
         }
 
-        // 2. [課程名稱計分]
+        // 2. [Course Name Scoring]
         val queryTokens = rawQuery.lowercase()
             .replace(Regex("[^a-z0-9 ]"), "")
             .split(" ")
@@ -156,7 +176,7 @@ object CourseDatabase {
 
             var matches = 0
             for (qToken in queryTokens) {
-                // 字首比對
+                // StartsWith logic handles plurals (Acoustic vs Acoustics)
                 if (courseNameTokens.any { cToken -> cToken == qToken || cToken.startsWith(qToken) }) {
                     matches++
                 }
@@ -169,6 +189,7 @@ object CourseDatabase {
                 val lenDiff = abs(courseNameTokens.size - queryTokens.size)
                 val lengthPenalty = lenDiff * 0.1
                 val fullStringBonus = if (course.name.lowercase().contains(rawQuery.lowercase())) 0.5 else 0.0
+
                 score = (precision + recall + fullStringBonus) - lengthPenalty
             }
 

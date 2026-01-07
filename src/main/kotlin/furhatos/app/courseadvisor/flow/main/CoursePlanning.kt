@@ -110,13 +110,17 @@ val GuidedSearch: State = state {
 
     onEntry {
         if (myCart.isEmpty()) {
-            furhat.ask("Welcome. To help you plan, you can use the filters on the left side of the screen, or shall I help you filter the course?")
+            furhat.ask("Welcome. To help you plan, you can use the filters on the left side of the screen, or should I help you filter the course?")
         } else {
             goto(CoursePlanning)
         }
     }
 
     onResponse<Yes> {
+        furhat.say("Nice! Let me help you filter the courses.")
+        goto(FilterAskPeriod)
+    }
+    onResponse<Sure> {
         furhat.say("Nice! Let me help you filter the courses.")
         goto(FilterAskPeriod)
     }
@@ -277,7 +281,7 @@ val FilterAskCredits: State = state {
 // 3. 問 Programme (使用 TellProgramme 或直接文字)
 val FilterAskProgramme: State = state {
     onEntry {
-        furhat.ask("Which programme track? Like Computer Science?")
+        furhat.ask("Which programme track? Like Interactive Media Technology?")
     }
 
     onResponse<TellProgramme> {
