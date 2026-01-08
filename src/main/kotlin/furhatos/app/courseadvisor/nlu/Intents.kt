@@ -9,21 +9,12 @@ import furhatos.app.courseadvisor.data.CourseDatabase // 引入 Database
 // 1. [修改] 使用帶有同義詞的清單
 class CourseCode : EnumEntity() {
     override fun getEnum(lang: Language): List<String> {
-        // 這會回傳 ["DT2212:DT 2212,D T 2 2 1 2...", ...]
-        return CourseDatabase.getNluList()
+        return CourseDatabase.getAllCodeEnums()
     }
 }
 
-// EnumEntity 並動態載入清單
-class CourseName : EnumEntity() {
-
-    // 覆寫這個方法，Furhat 啟動時會呼叫這裡來建立辨識清單
-    override fun getEnum(lang: Language): List<String> {
-        // 從我們剛寫好的資料庫拿清單
-        return CourseDatabase.getNluList()
-    }
-}
-
+class CourseName1 : WildcardEntity("courseName", AddCourse())
+class CourseName2 : WildcardEntity("courseName", RemoveCourse())
 
 // Period Entity，用來辨識學期
 class Period : EnumEntity() {
@@ -65,7 +56,7 @@ class StartPlanning : Intent() {
 
 class AddCourse(
     var code: CourseCode? = null,
-    var courseName: CourseName? = null
+    var courseName: CourseName1? = null
 ) : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(
@@ -79,7 +70,6 @@ class AddCourse(
             "@code",
             "Add @code",
             "I want @code",
-            "Course @code",
             "I want to add @code"
         )
     }
@@ -87,7 +77,7 @@ class AddCourse(
 
 class RemoveCourse(
     var code: CourseCode? = null,
-    var courseName: CourseName? = null
+    var courseName: CourseName2? = null
 ) : Intent() {
     override fun getExamples(lang: Language): List<String> {
         return listOf(

@@ -141,9 +141,9 @@ val GuidedSearch: State = state {
     onResponse<AddCourse> {
         logInteraction(it.text)
         furhat.say("Ah, you found a course already!")
-        val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
-        if (rawName != null) {
-            val foundCourse = CourseDatabase.findCourseByName(rawName)
+        val rawInput = it.intent.code?.value ?: it.intent.courseName?.text
+        if (rawInput != null) {
+            val foundCourse = CourseDatabase.findCourseByName(rawInput)
             if (foundCourse != null) {
                 if (myCart.any { item -> item.code == foundCourse.code }) {
                     furhat.say("You already have ${foundCourse.name}.")
@@ -230,7 +230,7 @@ val FilterAskPeriod: State = state {
 // 2. 問 Credits (使用 TellCredits)
 val FilterAskCredits: State = state {
     onEntry {
-        furhat.ask("How many credits? 7.5 or 6.0?")
+        furhat.ask("How many credits? 7.5, 6.0, or any you come up with?")
     }
 
     onResponse<TellCredits> {
@@ -342,7 +342,7 @@ val CoursePlanning: State = state {
             val size = myCart.size
             val filledPrompts = listOf(
                 "You have $size courses so far. What's next?",
-                "That makes $size courses in your plan. Do you want to add another?",
+                "That makes $size courses in your plan. What course you want to add?",
                 "We have $size items in the list. What course do you want to add another?"
             )
             furhat.say(filledPrompts.random())
@@ -363,15 +363,21 @@ val CoursePlanning: State = state {
 
     onResponse<AddCourse> {
         logInteraction(it.text)
-        val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
 
-        if (rawName != null) {
-            val foundCourse = CourseDatabase.findCourseByName(rawName)
+        // [關鍵邏輯]
+        // 1. 如果 NLU 抓到 CourseCode (Enum)，.value 會是標準代碼 (如 DD2424)，非常準確
+        // 2. 如果沒抓到 Code，就抓 CourseName (Wildcard)，取得文字後丟給資料庫模糊搜尋
+        val rawInput = it.intent.code?.value ?: it.intent.courseName?.text
+
+        if (rawInput != null) {
+            // 資料庫搜尋會處理模糊比對 (for Name) 和去空格比對 (for Code)
+            val foundCourse = CourseDatabase.findCourseByName(rawInput)
 
             if (foundCourse != null) {
                 if (myCart.any { item -> item.code == foundCourse.code }) {
                     furhat.gesture(Gestures.Surprise)
                     furhat.say("You already have ${foundCourse.name}.")
+                    // 留在原地或繼續聽
                     furhat.listen()
                 } else {
                     tempCourseToAdd = foundCourse
@@ -379,7 +385,8 @@ val CoursePlanning: State = state {
                 }
             } else {
                 furhat.gesture(Gestures.BrowFrown)
-                furhat.say("I heard $rawName, but I couldn't verify the details.")
+                // 讓 Furhat 說出它聽到了什麼，方便除錯
+                furhat.say("I heard $rawInput, but I couldn't find a matching course.")
                 furhat.listen()
             }
         } else {
@@ -390,11 +397,16 @@ val CoursePlanning: State = state {
 
     onResponse<RemoveCourse> {
         logInteraction(it.text)
-        val rawName = it.intent.courseName?.value ?: it.intent.courseName?.toString()
+        val rawInput = it.intent.code?.value ?: it.intent.courseName?.text
 
-        if (rawName != null) {
-            val target = myCart.find { item ->
-                item.name.equals(rawName, true) || item.code.equals(rawName, true)
+        if (rawInput != null) {
+            // 使用資料庫的模糊搜尋邏輯來找購物車裡的課，這樣比較一致
+            // 或者是簡單遍歷購物車
+            val foundInDb = CourseDatabase.findCourseByName(rawInput)
+            val targetCode = foundInDb?.code ?: rawInput.replace(" ", "").uppercase()
+
+            val target = myCart.find {
+                it.code == targetCode || it.name.equals(rawInput, true)
             }
 
             if (target != null) {
@@ -402,7 +414,7 @@ val CoursePlanning: State = state {
                 goto(ConfirmRemoveState)
             } else {
                 furhat.gesture(Gestures.Shake)
-                furhat.say("You don't have ${rawName} in your schedule.")
+                furhat.say("You don't have that course in your schedule.")
                 furhat.listen()
             }
         } else {
@@ -504,7 +516,7 @@ val OverloadWarningState: State = state {
         val c = tempCourseToAdd!!
         val p = c.availablePeriods.firstOrNull() ?: "P1"
         furhat.gesture(Gestures.Oh)
-        furhat.ask("Wait, adding this course will exceed 15 credits in $p. That is a heavy workload. Are you sure you want to add it?")
+        furhat.ask("I found${c.name}, wait, adding this course will exceed 15 credits in $p. That is a heavy workload. Are you sure you want to add it?")
     }
 
     onResponse<Yes> {
